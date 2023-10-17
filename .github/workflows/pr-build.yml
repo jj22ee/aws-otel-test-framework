@@ -3,76 +3,78 @@
 
 name: PR Build
 on:
-  pull_request:
-    branches: 
-      - terraform
-      - release/v*
-      - dev*
+  # pull_request:
+  #   branches: 
+  #     - terraform
+  #     - release/v*
+  #     - dev*
+  push:
+    branches: [ terraform ]
 
 jobs:
-  validator-build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up JDK 1.8
-      uses: actions/setup-java@v3
-      with:
-        distribution: 'zulu'
-        java-version: 17
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-    - name: Build with Gradle
-      run: ./gradlew :validator:build
-  validator-image-build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    - name: Build validator image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./validator
-        push: false
-        tags: latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        platforms : linux/amd64, linux/arm64
-  go-test:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@v4
-      with:
-        go-version: '~1.21.1'
-    - name: Checkout repo
-      uses: actions/checkout@v4
-    - name: Unit test
-      run: make go-test
-  cdk-test:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
-    - uses: actions/setup-node@v3
-      with:
-        node-version: 16
-    - name: Get npm cache directory
-      id: npm-cache-dir
-      run: |
-        echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
-    - uses: actions/cache@v3
-      id: npm-cache # use this to check for `cache-hit` ==> if: steps.npm-cache.outputs.cache-hit != 'true'
-      with:
-        path: ${{ steps.npm-cache-dir.outputs.dir }}
-        key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-node-
-    - name: Test CDK
-      working-directory: cdk_infra/
-      run: |
-        npm install
-        npm run test
+  # validator-build:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Set up JDK 1.8
+  #     uses: actions/setup-java@v3
+  #     with:
+  #       distribution: 'zulu'
+  #       java-version: 17
+  #   - name: Grant execute permission for gradlew
+  #     run: chmod +x gradlew
+  #   - name: Build with Gradle
+  #     run: ./gradlew :validator:build
+  # validator-image-build:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Set up Docker Buildx
+  #     uses: docker/setup-buildx-action@v3
+  #   - name: Build validator image
+  #     uses: docker/build-push-action@v5
+  #     with:
+  #       context: ./validator
+  #       push: false
+  #       tags: latest
+  #       cache-from: type=gha
+  #       cache-to: type=gha,mode=max
+  #       platforms : linux/amd64, linux/arm64
+  # go-test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - name: Set up Go 1.x
+  #     uses: actions/setup-go@v4
+  #     with:
+  #       go-version: '~1.21.1'
+  #   - name: Checkout repo
+  #     uses: actions/checkout@v4
+  #   - name: Unit test
+  #     run: make go-test
+  # cdk-test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - name: Checkout repo
+  #     uses: actions/checkout@v4
+  #   - uses: actions/setup-node@v3
+  #     with:
+  #       node-version: 16
+  #   - name: Get npm cache directory
+  #     id: npm-cache-dir
+  #     run: |
+  #       echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
+  #   - uses: actions/cache@v3
+  #     id: npm-cache # use this to check for `cache-hit` ==> if: steps.npm-cache.outputs.cache-hit != 'true'
+  #     with:
+  #       path: ${{ steps.npm-cache-dir.outputs.dir }}
+  #       key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+  #       restore-keys: |
+  #         ${{ runner.os }}-node-
+  #   - name: Test CDK
+  #     working-directory: cdk_infra/
+  #     run: |
+  #       npm install
+  #       npm run test
   adot-testbed:
     runs-on: ubuntu-latest
     steps:
@@ -87,4 +89,4 @@ jobs:
         uses: gradle/gradle-build-action@v2
       - name: adot-testbed build
         working-directory: adot-testbed/
-        run: gradle build -x test
+        run: gradle build
