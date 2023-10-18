@@ -70,6 +70,8 @@ import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 
@@ -81,9 +83,9 @@ import software.amazon.awssdk.services.xray.XRayClient;
 import software.amazon.awssdk.services.xray.model.BatchGetTracesRequest;
 import software.amazon.awssdk.services.xray.model.BatchGetTracesResponse;
 
-@Testcontainers(disabledWithoutDocker = true)
+// @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class LogsTests {
+class TraceIdsWithXRayTests {
     private static final String TEST_IMAGE = System.getenv("TEST_IMAGE") != null && !System.getenv("TEST_IMAGE").isEmpty()
         ? System.getenv("TEST_IMAGE")
         : "public.ecr.aws/aws-observability/aws-otel-collector:latest";
@@ -129,21 +131,27 @@ class LogsTests {
     }
 
     @Test
+    void testXRayTraceIdSendToXRay() throws Exception {
+        sendTracesToXRayHelper(false);
+    }
+
+    @Test
     void testW3CTraceIdSendToXRay() throws Exception {
+        sendTracesToXRayHelper(true);
+    }
+
+    void sendTracesToXRayHelper(boolean useXRayIDGenerator) throws Exception {
         String logStreamName = "fileRotation-logstream-" + uniqueID;
         collector = createAndStartCollector("/configurations/config-fileRotation.yaml", logStreamName);
         Thread.sleep(5000);
 
-        OpenTelemetry otel = openTelemetry();
+        OpenTelemetry otel = openTelemetry(useXRayIDGenerator);
         Tracer tracer = otel.getTracer("xray-w3c-id-test");
 
         Attributes attributes = Attributes.of(
             AttributeKey.stringKey("http.method"), "GET",
-            AttributeKey.stringKey("http.url"), "http://localhost:8080/randomEndpoint",
-            AttributeKey.stringKey("user"), "random-user",
-            AttributeKey.stringKey("http.route"), "/randomEndpoint",
-            AttributeKey.stringKey("required"), "false",
-            AttributeKey.stringKey("http.target"), "/randomEndpoint");
+            AttributeKey.stringKey("http.url"), "http://localhost:8080/randomEndpoint"
+        );
 
         int numOfTraces = 5;
         List<String> traceIds = new ArrayList<String>();
@@ -181,11 +189,12 @@ class LogsTests {
                 assertThat(traceIdsSet.contains(trace.id())).isTrue();
             });
 
-        // Cleanup
+        // Cleanup collector and OTel SDK
         collector.stop();
+        GlobalOpenTelemetry.resetForTest();
     }
 
-    public OpenTelemetry openTelemetry() {
+    public OpenTelemetry openTelemetry(boolean useXRayIDGenerator) {
         Resource resource = Resource.getDefault().toBuilder().put(ResourceAttributes.SERVICE_NAME, "xray-test").put(ResourceAttributes.SERVICE_VERSION, "0.1.0").build();
     
         SdkTracerProvider sdkTracerProvider = SdkTracerProvider.builder()
@@ -195,15 +204,26 @@ class LogsTests {
 
         String exporter = System.getenv().getOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
 
+        SdkTracerProvider tracerProvider;
+        
+        if (useXRayIDGenerator) {
+            tracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(
+                    BatchSpanProcessor.builder(OtlpGrpcSpanExporter.builder().setEndpoint(exporter).build()).build())
+                .setIdGenerator(AwsXrayIdGenerator.getInstance())
+                .setResource(resource)
+                .build();
+        } else {
+            tracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(
+                    BatchSpanProcessor.builder(OtlpGrpcSpanExporter.builder().setEndpoint(exporter).build()).build())
+                .setResource(resource)
+                .build();
+        }
+        
         OpenTelemetry openTelemetry =
             OpenTelemetrySdk.builder()
-                .setTracerProvider(
-                    SdkTracerProvider.builder()
-                        .addSpanProcessor(
-                            BatchSpanProcessor.builder(OtlpGrpcSpanExporter.builder().setEndpoint(exporter).build()).build())
-                        .setIdGenerator(AwsXrayIdGenerator.getInstance())
-                        .setResource(resource)
-                    .build())
+                .setTracerProvider(tracerProvider)
                 .buildAndRegisterGlobal();
   
         return openTelemetry;
