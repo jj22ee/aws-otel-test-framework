@@ -1,15 +1,74 @@
+# # receivers:
+# #   filelog:
+# #     include: [/tempLogs/testlogA.log]
+
+# receivers:
+#   otlp:
+#     protocols:
+#       grpc:
+#         # endpoint: "0.0.0.0:4317"
+#       http:
+
+# extensions:
+#   health_check:
+#   awsproxy:
+#     local_mode: true
+#     region: ${AWS_REGION}
+#     endpoint: 0.0.0.0:2000
+
+# exporters:
+#   logging:
+#     verbosity: detailed  ####
+#     # loglevel: debug    ####
+#   awsxray:
+#     local_mode: true
+#     region: ${AWS_REGION}
+
+# service:
+#   pipelines:
+#     traces:
+#       receivers: [otlp]
+#       exporters: [logging, awsxray]
+#     # metrics:
+#     #   receivers: [otlp]
+#     #   exporters: [logging]
+#   extensions: [health_check, awsproxy]
+#   telemetry:
+#     logs:
+#       level: "debug"  #####
+
+
+extensions:
+  health_check:
+  awsproxy:
+    local_mode: true
+    region: us-west-2
+    endpoint: 0.0.0.0:2000
+
 receivers:
-  filelog:
-    include: [/tempLogs/testlogA.log]
+  otlp:
+    protocols:
+      grpc:
+        # endpoint: 0.0.0.0:4317
+      http:
 
 exporters:
-  awscloudwatchlogs:
-    log_group_name: "adot-testbed/logs-component-testing/logs"
-    log_stream_name: ${LOG_STREAM_NAME}
-    log_retention: 7
+  logging:
+    verbosity: detailed
+    # loglevel: debug
+  awsxray:
+    local_mode: true
+    region: us-west-2
 
 service:
   pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging, awsxray]
+    metrics:
+      receivers: [otlp]
+      exporters: [logging]
+  extensions: [health_check, awsproxy]
+  telemetry:
     logs:
-      receivers: [filelog]
-      exporters: [awscloudwatchlogs]
+      level: "debug"  #####

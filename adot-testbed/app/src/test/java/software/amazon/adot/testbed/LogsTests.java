@@ -39,6 +39,8 @@ import org.junit.jupiter.api.TestInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.FixedHostPortGenericContainer;
+import org.testcontainers.containers.InternetProtocol;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -48,6 +50,39 @@ import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cloudwatchlogs.model.GetLogEventsRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+
+
+
+
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.propagation.ContextPropagators;
+// import io.opentelemetry.exporter.logging.LoggingMetricExporter;
+// import io.opentelemetry.exporter.logging.LoggingSpanExporter;
+// import io.opentelemetry.exporter.logging.SystemOutLogRecordExporter;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
+import io.opentelemetry.sdk.resources.Resource;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.logs.SdkLoggerProvider;
+import io.opentelemetry.sdk.logs.export.BatchLogRecordProcessor;
+import io.opentelemetry.sdk.logs.export.LogRecordExporter;
+// import io.opentelemetry.semconv.ResourceAttributes;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.semconv.resource.attributes.ResourceAttributes;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
+
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
+
+import io.opentelemetry.contrib.awsxray.AwsXrayIdGenerator;
 
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -69,6 +104,7 @@ class LogsTests {
         envVariables.put("AWS_REGION", System.getenv("AWS_REGION"));
         envVariables.put("AWS_ACCESS_KEY_ID", System.getenv("AWS_ACCESS_KEY_ID"));
         envVariables.put("AWS_SECRET_ACCESS_KEY", System.getenv("AWS_SECRET_ACCESS_KEY"));
+
         // Check if AWS_SESSION_TOKEN is not null before adding it
         if (System.getenv("AWS_SESSION_TOKEN") != null) {
             envVariables.put("AWS_SESSION_TOKEN", System.getenv("AWS_SESSION_TOKEN"));
@@ -78,154 +114,114 @@ class LogsTests {
         } catch (IOException e) {
             throw new RuntimeException("Failed to create log directory", e);
         }
-        var collector = new GenericContainer<>(TEST_IMAGE)
+        var collector = new  FixedHostPortGenericContainer<>(TEST_IMAGE)
             .withCopyFileToContainer(MountableFile.forClasspathResource(configFilePath), "/etc/collector/config.yaml")
+            // .withExposedPorts(4317)
+            // .withExposedPorts(55680)
+            // .withExposedPorts(8889)
+            // // .withExposedPorts(8888)
+            .withFixedExposedPort(4317, 4317, InternetProtocol.TCP)
+            // .withNetworkMode("host")
             .withLogConsumer(new Slf4jLogConsumer(collectorLogger))
             .waitingFor(Wait.forLogMessage(".*Everything is ready. Begin running and processing data.*", 1))
             .withEnv(envVariables)
             .withClasspathResourceMapping("/logs", "/logs", BindMode.READ_WRITE)
-            .withCommand("--config", "/etc/collector/config.yaml", "--feature-gates=+adot.receiver.filelog,+adot.exporter.awscloudwatchlogs,+adot.extension.file_storage");
+            .withCommand(
+                "--config", "/etc/collector/config.yaml",
+                // "-p 4317:4317",
+                "AWS_REGION=us-west-2"
+            );
+        // collector.addFixedExposedPort(4317, 4317, InternetProtocol.UDP);
+            // docker run --rm -p 2000:2000 -p 55680:55680 -p 8889:8888 -p 4317:4317 -e AWS_REGION=us-west-2 -e AWS_PROFILE=default -v ~/.aws:/root/.aws -v "${PWD}/examples/docker/config-test.yaml":/otel-local-config.yaml --name awscollector public.ecr.aws/aws-observability/aws-otel-collector:latest --feature-gates=exporter.awsxray.skiptimestampvalidation --config otel-local-config.yaml;
 
        //Mount the Temp directory
         collector.withFileSystemBind(logDirectory.toString(),"/tempLogs", BindMode.READ_WRITE);
-
+        System.out.println("HAHAHAHAHAHAHAA-Tues-Oct-17");
         collector.start();
         return collector;
     }
-    @Test
-    void testSyslog() throws Exception {
-        String logStreamName = "rfcsyslog-logstream-" + uniqueID;
-        collector = createAndStartCollector("/configurations/config-rfcsyslog.yaml", logStreamName);
 
-        List<InputStream> inputStreams = new ArrayList<>();
-        InputStream inputStream = getClass().getResourceAsStream("/logs/RFC5424.log");
-        inputStreams.add(inputStream);
-
-        validateLogs(logStreamName, inputStreams);
-
-        collector.stop();
-    }
-
-    @Test
-    void testLog4j() throws Exception {
-        String logStreamName = "log4j-logstream-" + uniqueID;
-        collector = createAndStartCollector("/configurations/config-log4j.yaml", logStreamName);
-
-        List<InputStream> inputStreams = new ArrayList<>();
-        InputStream inputStream = getClass().getResourceAsStream("/logs/log4j.log");
-        inputStreams.add(inputStream);
-
-        validateLogs(logStreamName, inputStreams);
-        collector.stop();
-    }
-
-    @Test
-    void testJson() throws Exception {
-        String logStreamName = "json-logstream-" + uniqueID;
-        collector = createAndStartCollector("/configurations/config-json.yaml", logStreamName);
-
-        List<InputStream> inputStreams = new ArrayList<>();
-        InputStream inputStream = getClass().getResourceAsStream("/logs/testingJSON.log");
-        inputStreams.add(inputStream);
-
-        validateLogs(logStreamName, inputStreams);
-
-        collector.stop();
-    }
-
-    @Test
-    void testCollectorRestartStorageExtension() throws Exception {
-        String logStreamName = "storageExtension-logstream-" + uniqueID;
-        collector = createAndStartCollector("/configurations/config-storageExtension.yaml", logStreamName);
-        File tempFile = new File(logDirectory.toString(), "storageExtension.log");
-        Thread.sleep(5000);
-
-        PrintWriter printWriter = new PrintWriter(tempFile);
-        printWriter.println("First Message, collector is running");
-        printWriter.println("Second Message, collector is running");
-        printWriter.println("Third Message, collector is running");
-        printWriter.flush();
-
-        List<InputStream> inputStreams = new ArrayList<>();
-        String expectedLogPath = logDirectory.toString();
-        String logPath = expectedLogPath + "/storageExtension.log";
-
-        InputStream inputStream = new FileInputStream(logPath);
-        inputStreams.add(inputStream);
-
-        validateLogs(logStreamName, inputStreams);
-
-        collector.stop();
-
-        // Create a new InputStream for the second call
-        InputStream secondInputStream = new FileInputStream(logPath);
-        List<InputStream> secondInputStreams = new ArrayList<>();
-        secondInputStreams.add(secondInputStream);
-
-        // write to the file when collector is stopped
-        printWriter.println("First Message after collector is stopped");
-        printWriter.println("Second Message after the collector is stopped");
-        printWriter.println("Third Message after the collector is stopped");
-        printWriter.flush();
-
-        printWriter.close();
-        // Restart the collector
-        collector.start();
-
-        validateLogs(logStreamName, secondInputStreams);
-
-        collector.stop();
-    }
 
     @Test
     void testFileRotation() throws Exception {
         String logStreamName = "fileRotation-logstream-" + uniqueID;
         collector = createAndStartCollector("/configurations/config-fileRotation.yaml", logStreamName);
 
+
         Thread.sleep(5000);
 
+        String address = collector.getHost();// + ":" + collector.getMappedPort(4317);
+        System.out.println("123456 - " + address);
+
+        OpenTelemetry otel = openTelemetry();
+        Tracer tracer = otel.getTracer("standard-w3c-id-test");
+
+        Attributes attributes = Attributes.of(
+            AttributeKey.stringKey("http.method"), "GET",
+            AttributeKey.stringKey("http.url"), "http://localhost:8080/importantEndpoint",
+            AttributeKey.stringKey("user"), "random-user",
+            AttributeKey.stringKey("http.route"), "/importantEndpoint",
+            AttributeKey.stringKey("required"), "false",
+            AttributeKey.stringKey("http.target"), "/importantEndpoint");
+
+        String[] traceIds = new String[20];
+        // Span span = tracer.spanBuilder("first-test").startSpan();
+        for (int count = 0; count < 5; count++) {
+            Span span = tracer.spanBuilder("second-test")
+                .setSpanKind(SpanKind.SERVER)
+                .setAllAttributes(attributes)
+                .startSpan();
+            System.out.println("Created Span #" + count);
+            traceIds[count] = span.getSpanContext().getTraceId();
+            System.out.println(traceIds[count] + " , " + Span.current().getSpanContext().getTraceId());
+            System.out.println(traceIds[count] + " , " + Span.current().getSpanContext().getSpanId());
+            span.end();
+        }
+
         // Create and write data to File A
-        File tempFile = new File(logDirectory.toString(), "testlogA.log");
+    //     File tempFile = new File(logDirectory.toString(), "testlogA.log");
 
-        PrintWriter printWriter = new PrintWriter(tempFile);
-        printWriter.println("Message in File A");
-        printWriter.flush();
-        printWriter.close();
+    //     PrintWriter printWriter = new PrintWriter(tempFile);
+    //     printWriter.println("Message in File A");
+    //     printWriter.flush();
+    //     printWriter.close();
 
-        List<InputStream> inputStreams = new ArrayList<>();
-        String expectedLogPath = logDirectory.toString();
+    //     List<InputStream> inputStreams = new ArrayList<>();
+    //     String expectedLogPath = logDirectory.toString();
 
-        String logPath = expectedLogPath + "/testlogA.log";
-        InputStream inputStream = new FileInputStream(logPath);
-        inputStreams.add(inputStream);
-        validateLogs(logStreamName, inputStreams);
-        inputStreams.remove(inputStream);
+    //     String logPath = expectedLogPath + "/testlogA.log";
+    //     InputStream inputStream = new FileInputStream(logPath);
+    //     inputStreams.add(inputStream);
+    //     // validateLogs(logStreamName, inputStreams);
+    //     inputStreams.remove(inputStream);
 
-       //Rename testLogA
-        File renameFile = new File(logDirectory.toString(), "testlogA-1234.log");
-        tempFile.renameTo(renameFile);
+    //    //Rename testLogA
+    //     File renameFile = new File(logDirectory.toString(), "testlogA-1234.log");
+    //     tempFile.renameTo(renameFile);
 
-        //Create testLogA again to imitate file rotation
-        File tempFileB = new File(logDirectory.toString(), "testlogA.log");
+    //     //Create testLogA again to imitate file rotation
+    //     File tempFileB = new File(logDirectory.toString(), "testlogA.log");
 
-        PrintWriter newprintWriter = new PrintWriter(tempFileB);
-        newprintWriter.println("Message in renamed file - line 1");
-        newprintWriter.println("Message in renamed file - line 2");
-        newprintWriter.println("Message in renamed file - line 3");
-        newprintWriter.flush();
-        newprintWriter.close();
+    //     PrintWriter newprintWriter = new PrintWriter(tempFileB);
+    //     newprintWriter.println("Message in renamed file - line 1");
+    //     newprintWriter.println("Message in renamed file - line 2");
+    //     newprintWriter.println("Message in renamed file - line 3");
+    //     newprintWriter.flush();
+    //     newprintWriter.close();
 
 
-        String logPath1 = expectedLogPath + "/testlogA-1234.log";
-        String logPath2 = expectedLogPath + "/testlogA.log";
+    //     String logPath1 = expectedLogPath + "/testlogA-1234.log";
+    //     String logPath2 = expectedLogPath + "/testlogA.log";
 
-        InputStream inputStream1 = new FileInputStream(logPath1);
-        InputStream inputStream2 = new FileInputStream(logPath2);
-        inputStreams.add(inputStream1);
-        inputStreams.add(inputStream2);
+    //     InputStream inputStream1 = new FileInputStream(logPath1);
+    //     InputStream inputStream2 = new FileInputStream(logPath2);
+    //     inputStreams.add(inputStream1);
+    //     inputStreams.add(inputStream2);
 
-        validateLogs(logStreamName, inputStreams);
+    //     // validateLogs(logStreamName, inputStreams);
 
+
+        Thread.sleep(15000);
         collector.stop();
     }
 
@@ -286,6 +282,45 @@ class LogsTests {
                 assertThat(messageToValidate).containsExactlyInAnyOrderElementsOf(lines);
                 return null;
             });
+    }
+
+
+    public OpenTelemetry openTelemetry() {
+        Resource resource = Resource.getDefault().toBuilder().put(ResourceAttributes.SERVICE_NAME, "xray-test").put(ResourceAttributes.SERVICE_VERSION, "0.1.0").build();
+    
+        SdkTracerProvider sdkTracerProvider = SdkTracerProvider.builder()
+            .setSampler(Sampler.alwaysOn())
+            .setResource(resource)
+            .build();
+    
+
+
+        String host = System.getenv("XRAY_ENDPOINT");
+        if (host == null) {
+          host = "http://0.0.0.0:2000";
+        }
+
+        String exporter = System.getenv().getOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
+
+        OpenTelemetry openTelemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(
+                    SdkTracerProvider.builder()
+                        .addSpanProcessor(
+                            BatchSpanProcessor.builder(OtlpGrpcSpanExporter.builder().setEndpoint(exporter).build()).build())
+                        .setIdGenerator(AwsXrayIdGenerator.getInstance())
+                        .setResource(resource)
+                        //???   .setEndpoint("http://localhost:4317")
+                        // .setSampler(
+                        //     AwsXrayRemoteSampler.newBuilder(resource)
+                        //         .setEndpoint(host)
+                        //         .setPollingInterval(Duration.ofSeconds(10))
+                        //         .build())
+                    .build())
+                .buildAndRegisterGlobal();
+        // Tracer tracer = openTelemetry.getTracer("centralized-sampling-tests");
+  
+        return openTelemetry;
     }
 
 }

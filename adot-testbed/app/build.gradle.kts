@@ -27,6 +27,22 @@ dependencies {
     testImplementation("com.github.rholder:guava-retrying:2.0.0")
     testImplementation("org.assertj:assertj-core:3.24.2")
     testImplementation("com.fasterxml.jackson.core:jackson-databind:2.13.0")
+
+    // XRay
+    //api(platform("io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:1.30.0-alpha"))
+    //implementation("io.opentelemetry:opentelemetry-api")
+    //implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+    //implementation("io.opentelemetry:opentelemetry-sdk")
+    //implementation("io.opentelemetry:opentelemetry-semconv:1.30.0-alpha")
+
+    api(platform("io.opentelemetry:opentelemetry-bom:1.30.1"))
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+	implementation("io.opentelemetry.contrib:opentelemetry-aws-xray:1.30.0")
+
+    implementation("io.opentelemetry:opentelemetry-sdk:1.30.0");
+    implementation("io.opentelemetry:opentelemetry-sdk-metrics:1.30.0");
+    implementation("io.opentelemetry:opentelemetry-exporter-logging:1.30.0");
+    implementation("io.opentelemetry:opentelemetry-semconv:1.30.0-alpha");
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
